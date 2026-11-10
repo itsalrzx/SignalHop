@@ -1,0 +1,41 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          {
+            POSTGRES_USER: signalhop,
+            POSTGRES_PASSWORD: signalhop_dev,
+            POSTGRES_DB: signalhop_phase0_test,
+          }
+        ports: ['55432:5432']
+        options: --health-cmd "pg_isready -U signalhop" --health-interval 3s --health-retries 20
+      redis:
+        image: redis:7
+        ports: ['56379:6379']
+        options: --health-cmd "redis-cli ping" --health-interval 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://signalhop:signalhop_dev@localhost:55432/signalhop_phase0_test
+      REDIS_URL: redis://localhost:56379
+      APP_ORIGIN: http://localhost:3100
+      NEXT_TELEMETRY_DISABLED: '1'
+      TEST_DATABASE_URL: postgresql://signalhop:signalhop_dev@localhost:55432/signalhop_phase0_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: npm }
+      - run: npm ci
+      - run: npm run db:migrate
+      - run: npm run spec:check
+      - run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm audit --omit=dev --audit-level=moderate
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
