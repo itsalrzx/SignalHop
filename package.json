@@ -1,0 +1,38 @@
+{
+  "name": "signalhop",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "dev:api": "npm run dev -w @signalhop/api",
+    "dev:web": "npm run dev -w @signalhop/web",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "lint": "eslint apps tests scripts --max-warnings=0",
+    "format": "prettier --write apps specs docs tests scripts AGENT.md README.md package.json tsconfig.base.json eslint.config.mjs playwright.config.ts docker-compose.yml .github",
+    "format:check": "prettier --check apps specs docs tests scripts AGENT.md README.md package.json tsconfig.base.json eslint.config.mjs playwright.config.ts docker-compose.yml .github",
+    "test": "npm test -w @signalhop/api",
+    "test:unit": "npm run test:unit -w @signalhop/api",
+    "test:integration": "npm run test:integration -w @signalhop/api",
+    "test:e2e": "playwright test",
+    "db:migrate": "npm run migration:run -w @signalhop/api",
+    "db:migrate:test": "DATABASE_URL=postgresql://signalhop:signalhop_dev@127.0.0.1:55432/signalhop_phase0_test npm run db:migrate",
+    "db:revert": "npm run migration:revert -w @signalhop/api",
+    "spec:check": "node scripts/check-specs.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.0",
+    "@playwright/test": "^1.58.0",
+    "@types/node": "^22.19.0",
+    "eslint": "^10.14.0",
+    "prettier": "^3.7.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.48.0"
+  }
+}
