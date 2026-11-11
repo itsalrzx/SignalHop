@@ -18,3 +18,5 @@ test-results/
 
 **/next-env.d.ts
 *-backup.sql
+
+/docs/
