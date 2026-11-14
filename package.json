@@ -24,6 +24,7 @@
     "db:migrate": "npm run migration:run -w @signalhop/api",
     "db:migrate:test": "DATABASE_URL=postgresql://signalhop:signalhop_dev@127.0.0.1:55432/signalhop_phase0_test npm run db:migrate",
     "db:revert": "npm run migration:revert -w @signalhop/api",
+    "benchmark": "node scripts/benchmark.mjs",
     "spec:check": "node scripts/check-specs.mjs"
   },
   "devDependencies": {

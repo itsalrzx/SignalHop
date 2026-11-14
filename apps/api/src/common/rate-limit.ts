@@ -1,10 +1,25 @@
 import { CanActivate, ExecutionContext, HttpException, Injectable } from '@nestjs/common';
 import { createHash } from 'node:crypto';
+import { RedisService } from './redis.service';
 import type { Request, Response } from 'express';
 @Injectable()
 export class RateLimiter {
   private readonly windows = new Map<string, { count: number; until: number }>();
-  check(key: string, max: number, windowMs: number) {
+  constructor(private readonly redis: RedisService) {}
+  async check(key: string, max: number, windowMs: number) {
+    try {
+      const result = (await this.redis.client.eval(
+        "local n=redis.call('INCR',KEYS[1]); if n==1 then redis.call('PEXPIRE',KEYS[1],ARGV[1]); end; return {n,redis.call('PTTL',KEYS[1])}",
+        1,
+        key,
+        windowMs,
+      )) as [number, number];
+      return result[0] > max ? Math.max(1, Math.ceil(result[1] / 1000)) : 0;
+    } catch {
+      return this.localCheck(key, max, windowMs);
+    }
+  }
+  private localCheck(key: string, max: number, windowMs: number) {
     const now = Date.now();
     let state = this.windows.get(key);
     if (!state || state.until <= now) {
@@ -22,12 +37,13 @@ export class RateLimiter {
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   constructor(private readonly limiter: RateLimiter) {}
-  canActivate(context: ExecutionContext) {
+  async canActivate(context: ExecutionContext) {
     const req = context.switchToHttp().getRequest<Request>();
     const res = context.switchToHttp().getResponse<Response>();
-    let category = '';
-    let max = 0;
-    let window = 60000;
+    let category = 'api',
+      max = 300,
+      window = 60000;
+    if (req.path.startsWith('/health') || req.path.startsWith('/docs')) return true;
     if (req.path.endsWith('/auth/register')) {
       category = 'register';
       max = 10;
@@ -35,11 +51,19 @@ export class RateLimitGuard implements CanActivate {
     } else if (req.path.endsWith('/auth/login')) {
       category = 'login';
       max = 10;
+    } else if (req.path.endsWith('/users/me/password')) {
+      category = 'password';
+      max = 5;
     } else if (req.path.endsWith('/auth/refresh')) {
       category = 'refresh';
       max = 60;
+    } else if (req.path === '/api/v1/links' && req.method === 'POST') {
+      category = 'create';
+      max = 30;
+    } else if (req.path.startsWith('/r/')) {
+      category = 'redirect';
+      max = 600;
     }
-    if (!category) return true;
     const key =
       'signalhop:rl:' +
       category +
@@ -47,7 +71,7 @@ export class RateLimitGuard implements CanActivate {
       createHash('sha256')
         .update(req.ip || 'unknown')
         .digest('hex');
-    const retry = this.limiter.check(key, max, window);
+    const retry = await this.limiter.check(key, max, window);
     if (retry) {
       res.setHeader('Retry-After', retry);
       throw new HttpException(

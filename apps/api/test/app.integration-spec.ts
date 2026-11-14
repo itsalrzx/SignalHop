@@ -1,8 +1,12 @@
 import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { RedisService } from '../src/common/redis.service';
+import { LinksService } from '../src/links/links.service';
+import { RedirectsService } from '../src/redirects/redirects.service';
+import { RateLimiter } from '../src/common/rate-limit';
 import { createApp } from '../src/bootstrap';
-describe('SignalHop Phase 2 with real PostgreSQL and Redis', () => {
+describe('SignalHop Phase 3 with real PostgreSQL and Redis', () => {
   let app: INestApplication;
   let tokenA: string;
   let tokenB: string;
@@ -16,6 +20,7 @@ describe('SignalHop Phase 2 with real PostgreSQL and Redis', () => {
   beforeAll(async () => {
     app = await createApp();
     await app.get(DataSource).runMigrations();
+    await app.get(RedisService).client.flushdb();
     await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send({ name: 'Alex', email, password })
@@ -184,6 +189,7 @@ describe('SignalHop Phase 2 with real PostgreSQL and Redis', () => {
     await app
       .get(DataSource)
       .query("UPDATE links SET expires_at = NOW() - interval '1 second' WHERE id=$1", [id]);
+    await app.get(RedisService).client.del('redirect:' + custom);
     await request(app.getHttpServer())
       .get('/r/' + custom)
       .expect(410);
@@ -248,5 +254,116 @@ describe('SignalHop Phase 2 with real PostgreSQL and Redis', () => {
       .auth(tokenA, { type: 'bearer' })
       .send({ code: 'changed' })
       .expect(400);
+  });
+  it('serves a warm redirect without a database lookup and invalidates edits', async () => {
+    await request(app.getHttpServer())
+      .get('/r/' + code)
+      .expect(302);
+    const lookup = jest.spyOn(app.get(LinksService), 'findCode');
+    await request(app.getHttpServer())
+      .get('/r/' + code)
+      .expect(302);
+    expect(lookup).not.toHaveBeenCalled();
+    lookup.mockRestore();
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + linkId)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com/cache-updated' })
+      .expect(200);
+    expect(await app.get(RedisService).client.get('redirect:' + code)).toBeNull();
+    const r = await request(app.getHttpServer())
+      .get('/r/' + code)
+      .expect(302);
+    expect(r.headers.location).toBe('https://example.com/cache-updated');
+  });
+  it('bounds cache lifetime by link expiration', async () => {
+    const c = await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({
+        destination: 'https://example.com/expiring',
+        expiresAt: new Date(Date.now() + 1200).toISOString(),
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .get('/r/' + c.body.code)
+      .expect(302);
+    const ttl = await app.get(RedisService).client.pttl('redirect:' + c.body.code);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(1200);
+    await new Promise((resolve) => setTimeout(resolve, 1250));
+    await request(app.getHttpServer())
+      .get('/r/' + c.body.code)
+      .expect(410);
+  });
+  it('falls back to actual PostgreSQL and local limits when Redis is disconnected', async () => {
+    const redis = app.get(RedisService).client;
+    const limiter = app.get(RateLimiter);
+    redis.disconnect();
+    try {
+      const r = await request(app.getHttpServer())
+        .get('/r/' + code)
+        .expect(302);
+      expect(r.headers.location).toBe('https://example.com/cache-updated');
+      await request(app.getHttpServer()).get('/health').expect(503);
+      const fallbackKey = 'signalhop:rl:fallback:' + Date.now();
+      expect(await limiter.check(fallbackKey, 2, 120)).toBe(0);
+      expect(await limiter.check(fallbackKey, 2, 120)).toBe(0);
+      expect(await limiter.check(fallbackKey, 2, 120)).toBeGreaterThan(0);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(await limiter.check(fallbackKey, 2, 120)).toBe(0);
+    } finally {
+      await redis.connect();
+    }
+  });
+  it('keeps an in-flight stale fill within its original deadline', async () => {
+    const links = app.get(LinksService);
+    const redis = app.get(RedisService).client;
+    const original = await links.findCode(code);
+    await redis.del('redirect:' + code);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const lookup = jest.spyOn(links, 'findCode').mockImplementationOnce(async () => {
+      await gate;
+      return original;
+    });
+    const pending = app.get(RedirectsService).resolve(code);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + linkId)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com/final' })
+      .expect(200);
+    release();
+    await pending;
+    const ttl = await redis.pttl('redirect:' + code);
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThan(30000);
+    lookup.mockRestore();
+    await redis.del('redirect:' + code);
+  });
+  it('enforces real Redis limits, ignores forged proxy headers, and sends Retry-After', async () => {
+    const limiter = app.get(RateLimiter);
+    const key = 'signalhop:rl:test:' + Date.now();
+    expect(await limiter.check(key, 2, 150)).toBe(0);
+    expect(await limiter.check(key, 2, 150)).toBe(0);
+    expect(await limiter.check(key, 2, 150)).toBeGreaterThan(0);
+    await new Promise((resolve) => setTimeout(resolve, 180));
+    expect(await limiter.check(key, 2, 150)).toBe(0);
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i++) {
+      const r = await request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .set('X-Forwarded-For', '203.0.113.' + i)
+        .send({ email, password: 'wrong-password-value' });
+      statuses.push(r.status);
+      if (r.status === 429) {
+        expect(Number(r.headers['retry-after'])).toBeGreaterThan(0);
+        expect(r.body.code).toBe('RATE_LIMITED');
+      }
+    }
+    expect(statuses).toContain(429);
   });
 });

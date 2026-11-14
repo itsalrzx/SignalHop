@@ -26,4 +26,8 @@ describe('configuration', () => {
     expect(() => settings({ ...env, NODE_ENV: 'production' })).toThrow('HTTPS'));
   it('rejects an invalid port', () =>
     expect(() => settings({ ...env, API_PORT: 'NaN' })).toThrow('API_PORT'));
+  it('requires explicit opt-in before trusting proxy headers', () => {
+    expect(settings(env).trustProxy).toBe(false);
+    expect(settings({ ...env, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+  });
 });

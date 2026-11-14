@@ -27,7 +27,7 @@ export class RedirectsController {
     if (!/^[A-Za-z0-9_-]{3,32}$/.test(code)) throw new NotFoundException('Link not found');
     const link = await this.redirects.resolve(code);
     if (!link) throw new NotFoundException('Link not found');
-    if (link.deletedAt || (link.expiresAt && link.expiresAt.getTime() <= Date.now()))
+    if (link.deletedAt || (link.expiresAt && Date.parse(link.expiresAt) <= Date.now()))
       throw new GoneException('This link is no longer available');
     if (!link.enabled) throw new NotFoundException('Link not found');
     res.setHeader('Cache-Control', 'no-store');

@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -11,10 +12,22 @@ import { randomInt } from 'node:crypto';
 import { Link } from './link.entity';
 import { CreateLinkDto, ListLinksDto, UpdateLinkDto } from './links.dto';
 import { destinationUrl } from './url';
+import { RedisService } from '../common/redis.service';
 import { settings } from '../config/config';
 @Injectable()
 export class LinksService {
-  constructor(@InjectRepository(Link) readonly repo: Repository<Link>) {}
+  private readonly logger = new Logger('Links');
+  constructor(
+    @InjectRepository(Link) readonly repo: Repository<Link>,
+    private readonly redis: RedisService,
+  ) {}
+  private async invalidate(code: string) {
+    try {
+      await this.redis.client.del('redirect:' + code);
+    } catch {
+      this.logger.warn({ event: 'cache_invalidation_failed' });
+    }
+  }
   serialize(link: Link) {
     return {
       id: link.id,
@@ -47,6 +60,7 @@ export class LinksService {
         const link = await this.repo.save(
           this.repo.create({ userId, destination, title: dto.title || null, code, expiresAt }),
         );
+        await this.invalidate(code);
         return this.serialize(link);
       } catch (error) {
         if ((error as { code?: string }).code !== '23505') throw error;
@@ -88,7 +102,7 @@ export class LinksService {
     return link;
   }
   async update(userId: string, id: string, dto: UpdateLinkDto) {
-    await this.owned(userId, id);
+    const original = await this.owned(userId, id);
     const patch: Partial<Link> = {};
     if (dto.destination !== undefined) patch.destination = destinationUrl(dto.destination);
     if (dto.title !== undefined) patch.title = dto.title || null;
@@ -98,12 +112,14 @@ export class LinksService {
       const result = await this.repo.update({ id, userId, deletedAt: IsNull() }, patch);
       if (result.affected !== 1) throw new NotFoundException('Link not found');
     }
+    await this.invalidate(original.code);
     return this.serialize(await this.owned(userId, id));
   }
   async remove(userId: string, id: string) {
-    await this.owned(userId, id);
+    const original = await this.owned(userId, id);
     const result = await this.repo.softDelete({ id, userId, deletedAt: IsNull() });
     if (result.affected !== 1) throw new NotFoundException('Link not found');
+    await this.invalidate(original.code);
   }
   findCode(code: string) {
     return this.repo.findOne({ where: { code }, withDeleted: true });
