@@ -17,6 +17,7 @@ import { api, type LinkPage, type ShortLink } from '@/lib/api';
 import { Button } from './ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from './ui/dialog';
 import { LinkDialog } from './link-dialog';
+import { QRDialog } from './qr-dialog';
 export function LinksTable({ compact = false }: { compact?: boolean }) {
   const client = useQueryClient();
   const [term, setTerm] = useState('');
@@ -205,6 +206,7 @@ export function LinksTable({ compact = false }: { compact?: boolean }) {
                                 <Copy size={15} />
                               )}
                             </Button>
+                            <QRDialog link={link} />
                             <LinkDialog link={link} />
                             <Button
                               size="icon"

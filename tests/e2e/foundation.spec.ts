@@ -1,5 +1,6 @@
+import { readFile } from 'node:fs/promises';
 import { expect, test } from '@playwright/test';
-test('account, custom link, analytics, edit, filter, delete and logout journey', async ({
+test('account, custom link, analytics, QR, edit, filter, delete, settings and logout journey', async ({
   page,
   request,
 }) => {
@@ -33,6 +34,9 @@ test('account, custom link, analytics, edit, filter, delete and logout journey',
   await expect(page.getByRole('heading', { name: 'Analytics.' })).toBeVisible();
   await page.getByLabel('Analytics period').selectOption('30');
   await expect(page.getByRole('group', { name: 'Total clicks', exact: true })).toContainText('1');
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(page).toHaveURL('/dashboard');
+  await page.screenshot({ path: 'test-results/screenshots/dashboard-desktop.png', fullPage: true });
   await page.getByRole('link', { name: 'My links', exact: true }).click();
   await expect(page).toHaveURL('/links');
   await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
@@ -44,6 +48,14 @@ test('account, custom link, analytics, edit, filter, delete and logout journey',
   await page.getByRole('link', { name: 'Back to my links' }).click();
   await expect(page).toHaveURL('/links');
   await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'QR code for Portfolio', exact: true }).click();
+  await expect(page.getByRole('img', { name: /QR code for/ })).toBeVisible();
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('link', { name: 'Download PNG' }).click();
+  const download = await downloadPromise;
+  const bytes = await readFile((await download.path())!);
+  expect(bytes.subarray(0, 8).toString('hex')).toBe('89504e470d0a1a0a');
+  await page.getByRole('button', { name: 'Close dialog' }).click();
   await page.getByRole('button', { name: 'Edit Portfolio', exact: true }).click();
   await page.getByLabel('Destination URL').fill('https://example.com/updated');
   await page.getByRole('switch').uncheck();
@@ -61,11 +73,16 @@ test('account, custom link, analytics, edit, filter, delete and logout journey',
   await expect(page).toHaveURL('/dashboard');
   await page.reload();
   await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL('/settings');
+  await page.getByLabel('Full name').fill('Alex Updated');
+  await page.getByRole('button', { name: 'Save profile' }).click();
+  await expect(page.getByRole('status')).toHaveText('Profile updated.');
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
 });
 
-test('mobile navigation and keyboard dialog remain usable', async ({ page }) => {
+test('mobile navigation, keyboard dialog and password settings', async ({ page }) => {
   test.setTimeout(60000);
   await page.setViewportSize({ width: 375, height: 900 });
   const email = 'mobile-' + Date.now() + '@example.com';
@@ -79,6 +96,7 @@ test('mobile navigation and keyboard dialog remain usable', async ({ page }) => 
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  await page.screenshot({ path: 'test-results/screenshots/dashboard-mobile.png', fullPage: true });
   await page.getByRole('button', { name: 'Create link', exact: true }).click();
   await expect(page.getByLabel('Destination URL')).toBeFocused();
   await page.keyboard.press('Escape');
@@ -88,6 +106,19 @@ test('mobile navigation and keyboard dialog remain usable', async ({ page }) => 
   await page.getByRole('link', { name: 'Analytics', exact: true }).click();
   await expect(page).toHaveURL('/analytics');
   await expect(page.getByRole('heading', { name: 'Analytics.' })).toBeVisible();
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('link', { name: 'Settings', exact: true }).click();
+  await expect(page).toHaveURL('/settings');
+  await expect(page.getByRole('heading', { name: 'Settings.' })).toBeVisible();
+  await page.getByLabel('Current password', { exact: true }).fill('Portfolio-secret-2026');
+  await page.getByLabel('New password', { exact: true }).fill('Changed-secret-2026');
+  await page.getByLabel('Confirm new password').fill('Changed-secret-2026');
+  await page.getByRole('button', { name: 'Update password' }).click();
+  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  await page.getByLabel('Email address').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill('Changed-secret-2026');
+  await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
   await page.goto('/docs');
   await expect(page.getByRole('heading', { name: /SignalHop API/ })).toBeVisible();
 });

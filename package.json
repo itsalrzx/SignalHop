@@ -32,7 +32,10 @@
     "@eslint/js": "^10.0.0",
     "@playwright/test": "^1.58.0",
     "@types/node": "^22.19.0",
+    "@types/pngjs": "^6.0.5",
     "eslint": "^10.14.0",
+    "jsqr": "^1.4.0",
+    "pngjs": "^7.0.0",
     "prettier": "^3.7.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.48.0"

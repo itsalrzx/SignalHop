@@ -25,6 +25,7 @@ import {
   BarChart3,
 } from 'lucide-react';
 import { api, type AnalyticsReport } from '@/lib/api';
+import { QRDialog } from './qr-dialog';
 import { LinkDialog } from './link-dialog';
 import { LinksTable } from './links-table';
 import { Button } from './ui/button';
@@ -153,7 +154,14 @@ export function AnalyticsDashboard({ full = false, linkId }: { full?: boolean; l
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {linkId && report?.link ? <LinkDialog link={report.link} /> : !full && <LinkDialog />}
+          {linkId && report?.link ? (
+            <>
+              <QRDialog link={report.link} />
+              <LinkDialog link={report.link} />
+            </>
+          ) : (
+            !full && <LinkDialog />
+          )}
           <label className="range-select">
             <CalendarDays size={14} />
             <select

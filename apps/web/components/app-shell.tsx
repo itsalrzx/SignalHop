@@ -11,6 +11,7 @@ import {
   Loader2,
   LogOut,
   Menu,
+  Settings2,
   X,
 } from 'lucide-react';
 import { Brand } from './brand';
@@ -39,6 +40,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
     { href: '/links', label: 'My links', icon: Link2 },
     { href: '/analytics', label: 'Analytics', icon: BarChart3 },
+    { href: '/settings', label: 'Settings', icon: Settings2 },
   ];
   return (
     <div>

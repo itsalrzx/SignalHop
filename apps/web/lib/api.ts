@@ -91,6 +91,12 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await responseFor(path, init);
   return response.status === 204 ? (undefined as T) : await response.json();
 }
+export async function apiBlob(path: string) {
+  return (await responseFor(path)).blob();
+}
+export function updateProfile(user: User) {
+  for (const listener of listeners) listener(user);
+}
 export async function signIn(email: string, password: string) {
   const session = await api<Session>('/auth/login', {
     method: 'POST',

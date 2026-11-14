@@ -1,17 +1,21 @@
 import request from 'supertest';
+import { PNG } from 'pngjs';
+import jsQR from 'jsqr';
 import { Worker } from 'bullmq';
 import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { ClickCapture } from '../src/analytics/click-capture.service';
 import { CLICKS_QUEUE, ClickPayload, redisConnection } from '../src/analytics/queue';
+import { hashPassword } from '../src/auth/auth.service';
+import { User } from '../src/users/user.entity';
 import { processClick } from '../src/analytics/process-click';
 import { RedisService } from '../src/common/redis.service';
 import { LinksService } from '../src/links/links.service';
 import { RedirectsService } from '../src/redirects/redirects.service';
 import { RateLimiter } from '../src/common/rate-limit';
 import { createApp } from '../src/bootstrap';
-describe('SignalHop Phase 4 with real PostgreSQL and Redis', () => {
+describe('SignalHop Phase 5 with real PostgreSQL and Redis', () => {
   let app: INestApplication;
   let tokenA: string;
   let tokenB: string;
@@ -376,6 +380,121 @@ describe('SignalHop Phase 4 with real PostgreSQL and Redis', () => {
     expect(ttl).toBeLessThan(30000);
     lookup.mockRestore();
     await redis.del('redirect:' + code);
+  });
+  it('decodes the actual authorized QR PNG to the short URL', async () => {
+    const r = await request(app.getHttpServer())
+      .get('/api/v1/links/' + linkId + '/qr?size=384')
+      .auth(tokenA, { type: 'bearer' })
+      .buffer(true)
+      .expect(200);
+    expect(r.headers['content-type']).toContain('image/png');
+    expect(r.headers['content-disposition']).toContain(code + '.png');
+    const png = PNG.sync.read(r.body);
+    const decoded = jsQR(new Uint8ClampedArray(png.data), png.width, png.height);
+    expect(decoded?.data).toBe('http://localhost:3000/r/' + code);
+    await request(app.getHttpServer())
+      .get('/api/v1/links/' + linkId + '/qr')
+      .auth(tokenB, { type: 'bearer' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get('/api/v1/links/' + linkId + '/qr?size=4096')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(400);
+  });
+  it('updates profiles and changes passwords while revoking refresh credentials', async () => {
+    const login = await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password })
+      .expect(200);
+    const refresh = login.headers['set-cookie'][0].split(';')[0];
+    const profile = await request(app.getHttpServer())
+      .patch('/api/v1/users/me')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ name: 'Alex Updated' })
+      .expect(200);
+    expect(profile.body.user.name).toBe('Alex Updated');
+    expect(profile.body.user).not.toHaveProperty('passwordHash');
+    await request(app.getHttpServer())
+      .patch('/api/v1/users/me')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ email: 'changed@example.com' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/v1/users/me/password')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ currentPassword: 'incorrect-password', newPassword: 'New-secret-2026' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/api/v1/users/me/password')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ currentPassword: password, newPassword: 'New-secret-2026' })
+      .expect(204);
+    await browser(
+      request(app.getHttpServer()).post('/api/v1/auth/refresh').set('Cookie', refresh),
+    ).expect(401);
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/api/v1/auth/login')
+      .send({ email, password: 'New-secret-2026' })
+      .expect(200);
+  });
+  it('documents actual response schemas and rejects malformed refresh IDs', async () => {
+    const docs = await request(app.getHttpServer()).get('/docs-json').expect(200);
+    expect(docs.body.components.schemas.LinkResponse.properties.shortUrl).toBeDefined();
+    expect(
+      docs.body.paths['/api/v1/links'].get.responses['200'].content['application/json'].schema.$ref,
+    ).toContain('LinkPageResponse');
+    await browser(
+      request(app.getHttpServer())
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', 'signalhop_refresh=' + '-'.repeat(36) + '.' + 'a'.repeat(64)),
+    ).expect(401);
+  });
+  it('does not mint an old-password refresh token across a password change', async () => {
+    const raceEmail = 'race-' + Date.now() + '@example.com';
+    const registered = await request(app.getHttpServer())
+      .post('/api/v1/auth/register')
+      .send({ name: 'Race check', email: raceEmail, password })
+      .expect(201);
+    const id = registered.body.user.id;
+    const nextHash = await hashPassword('Concurrent-new-password');
+    const db = app.get(DataSource);
+    const runner = db.createQueryRunner();
+    await runner.connect();
+    await runner.startTransaction();
+    let pending: Promise<request.Response> | undefined;
+    try {
+      await runner.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [id]);
+      pending = request(app.getHttpServer())
+        .post('/api/v1/auth/login')
+        .send({ email: raceEmail, password })
+        .then((response) => response);
+      await waitUntil(
+        async () =>
+          Number(
+            (
+              await db.query(
+                "SELECT COUNT(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%FOR SHARE%'",
+              )
+            )[0].count,
+          ) > 0,
+      );
+      await runner.manager.getRepository(User).update(id, { passwordHash: nextHash });
+      await runner.commitTransaction();
+      expect((await pending).status).toBe(401);
+      expect(
+        Number(
+          (await db.query('SELECT COUNT(*) FROM refresh_tokens WHERE user_id=$1', [id]))[0].count,
+        ),
+      ).toBe(0);
+    } finally {
+      if (runner.isTransactionActive) await runner.rollbackTransaction();
+      await runner.release();
+      if (pending) await pending;
+    }
   });
   it('enforces real Redis limits, ignores forged proxy headers, and sends Retry-After', async () => {
     const limiter = app.get(RateLimiter);
