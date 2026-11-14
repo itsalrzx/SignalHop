@@ -1,8 +1,5 @@
 import { expect, test } from '@playwright/test';
-test('account, first link, redirect, reload recovery and logout journey', async ({
-  page,
-  request,
-}) => {
+test('account, custom link, edit, filter, delete and logout journey', async ({ page, request }) => {
   test.setTimeout(60000);
   const email = 'browser-' + Date.now() + '@example.com';
   await page.goto('/');
@@ -17,6 +14,7 @@ test('account, first link, redirect, reload recovery and logout journey', async 
   await page.getByRole('button', { name: 'Create link', exact: true }).click();
   await page.getByLabel('Destination URL').fill('https://example.com/portfolio');
   await page.getByLabel('Title').fill('Portfolio');
+  await page.getByLabel('Custom short code').fill('browser-' + Date.now());
   await page.getByRole('button', { name: 'Create short link', exact: true }).click();
   await expect(page.getByText('Portfolio', { exact: true })).toBeVisible();
   const href = await page.locator('a[href^="/r/"]').first().getAttribute('href');
@@ -26,21 +24,42 @@ test('account, first link, redirect, reload recovery and logout journey', async 
   await page.getByRole('link', { name: 'My links', exact: true }).click();
   await expect(page).toHaveURL('/links');
   await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Edit Portfolio', exact: true }).click();
+  await page.getByLabel('Destination URL').fill('https://example.com/updated');
+  await page.getByRole('switch').uncheck();
+  await page.getByRole('button', { name: 'Save changes' }).click();
+  await expect(page.getByRole('cell', { name: 'Disabled', exact: true })).toBeVisible();
+  await page.getByLabel('Filter by status').selectOption('disabled');
+  await page.getByLabel('Search links').fill('no-such-title');
+  await expect(page.getByText('No links match your filters.')).toBeVisible();
+  await page.getByLabel('Search links').fill('Portfolio');
   await expect(page.getByText('Portfolio', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Delete Portfolio', exact: true }).click();
+  await page.getByRole('button', { name: 'Delete link', exact: true }).click();
+  await expect(page.getByText('No links match your filters.')).toBeVisible();
   await page.reload();
   await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
-  await expect(page.getByText('Portfolio', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
 });
 
-test('auth and dashboard remain usable on a narrow screen', async ({ page }) => {
+test('mobile navigation and keyboard dialog remain usable', async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 900 });
-  await page.goto('/login');
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  const email = 'mobile-' + Date.now() + '@example.com';
+  await page.goto('/register');
+  await page.getByLabel('Full name').fill('Mobile User');
+  await page.getByLabel('Email address').fill(email);
+  await page.getByLabel('Password', { exact: true }).fill('Portfolio-secret-2026');
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
+  await page.getByRole('button', { name: 'Create link', exact: true }).click();
+  await expect(page.getByLabel('Destination URL')).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog')).not.toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create link', exact: true })).toBeFocused();
   await page.goto('/docs');
   await expect(page.getByRole('heading', { name: /SignalHop API/ })).toBeVisible();
 });

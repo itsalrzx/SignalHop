@@ -2,7 +2,7 @@ import request from 'supertest';
 import type { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { createApp } from '../src/bootstrap';
-describe('SignalHop Phase 1 with real PostgreSQL and Redis', () => {
+describe('SignalHop Phase 2 with real PostgreSQL and Redis', () => {
   let app: INestApplication;
   let tokenA: string;
   let tokenB: string;
@@ -71,7 +71,7 @@ describe('SignalHop Phase 1 with real PostgreSQL and Redis', () => {
       .send({ destination: 'https://example.com', userId: 'attacker' })
       .expect(400);
   });
-  it('creates owned links and isolates listings per user', async () => {
+  it('creates and lists an owned link', async () => {
     const r = await request(app.getHttpServer())
       .post('/api/v1/links')
       .auth(tokenA, { type: 'bearer' })
@@ -81,16 +81,17 @@ describe('SignalHop Phase 1 with real PostgreSQL and Redis', () => {
     code = r.body.code;
     expect(code).toMatch(/^[A-Za-z0-9]{8}$/);
     expect(r.body.shortUrl).toContain('/r/' + code);
-    const listA = await request(app.getHttpServer())
+    const list = await request(app.getHttpServer())
       .get('/api/v1/links')
       .auth(tokenA, { type: 'bearer' })
       .expect(200);
-    expect(listA.body.items.some((l: { id: string }) => l.id === linkId)).toBe(true);
-    const listB = await request(app.getHttpServer())
-      .get('/api/v1/links')
+    expect(list.body.items.some((l: { id: string }) => l.id === linkId)).toBe(true);
+  });
+  it('does not expose another user’s link', async () => {
+    await request(app.getHttpServer())
+      .get('/api/v1/links/' + linkId)
       .auth(tokenB, { type: 'bearer' })
-      .expect(200);
-    expect(listB.body.items.some((l: { id: string }) => l.id === linkId)).toBe(false);
+      .expect(404);
   });
   it('redirects and supports HEAD without caching in browsers', async () => {
     const r = await request(app.getHttpServer())
@@ -125,5 +126,127 @@ describe('SignalHop Phase 1 with real PostgreSQL and Redis', () => {
     await browser(
       request(app.getHttpServer()).post('/api/v1/auth/refresh').set('Cookie', latest),
     ).expect(401);
+  });
+  it('enforces the complete owned link lifecycle', async () => {
+    const custom = 'managed-' + Date.now();
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({
+        destination: 'https://example.com/original',
+        title: 'Lifecycle',
+        customCode: custom,
+        expiresAt: new Date(Date.now() + 86400000).toISOString(),
+      })
+      .expect(201);
+    const id = created.body.id;
+    await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenB, { type: 'bearer' })
+      .send({ destination: 'https://example.com', customCode: custom })
+      .expect(409);
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + id)
+      .auth(tokenB, { type: 'bearer' })
+      .send({ enabled: false })
+      .expect(404);
+    await request(app.getHttpServer())
+      .delete('/api/v1/links/' + id)
+      .auth(tokenB, { type: 'bearer' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + id)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com/updated', enabled: false, expiresAt: null })
+      .expect(200);
+    await request(app.getHttpServer())
+      .get('/r/' + custom)
+      .expect(404);
+    const disabled = await request(app.getHttpServer())
+      .get('/api/v1/links?status=disabled&search=Lifecycle')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(disabled.body.total).toBe(1);
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + id)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ enabled: true })
+      .expect(200);
+    const redirect = await request(app.getHttpServer())
+      .get('/r/' + custom)
+      .expect(302);
+    expect(redirect.headers.location).toBe('https://example.com/updated');
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + id)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ expiresAt: new Date(Date.now() - 1000).toISOString() })
+      .expect(400);
+    await app
+      .get(DataSource)
+      .query("UPDATE links SET expires_at = NOW() - interval '1 second' WHERE id=$1", [id]);
+    await request(app.getHttpServer())
+      .get('/r/' + custom)
+      .expect(410);
+    const expired = await request(app.getHttpServer())
+      .get('/api/v1/links?status=expired&search=Lifecycle')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(expired.body.total).toBe(1);
+    await request(app.getHttpServer())
+      .delete('/api/v1/links/' + id)
+      .auth(tokenA, { type: 'bearer' })
+      .expect(204);
+    await request(app.getHttpServer())
+      .get('/api/v1/links/' + id)
+      .auth(tokenA, { type: 'bearer' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get('/r/' + custom)
+      .expect(410);
+    await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com', customCode: custom })
+      .expect(409);
+  });
+  it('paginates stably and escapes search wildcards', async () => {
+    await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({
+        destination: 'https://example.com/one',
+        title: '100%real',
+        customCode: 'caseA-' + Date.now(),
+      })
+      .expect(201);
+    await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com/two', customCode: 'casea-' + Date.now() })
+      .expect(201);
+    const one = await request(app.getHttpServer())
+      .get('/api/v1/links?limit=1&page=1')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    const two = await request(app.getHttpServer())
+      .get('/api/v1/links?limit=1&page=2')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(one.body.items[0].id).not.toBe(two.body.items[0].id);
+    const literal = await request(app.getHttpServer())
+      .get('/api/v1/links')
+      .query({ search: '%' })
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(literal.body.total).toBe(1);
+    await request(app.getHttpServer())
+      .get('/api/v1/links?limit=101')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(400);
+    await request(app.getHttpServer())
+      .patch('/api/v1/links/' + linkId)
+      .auth(tokenA, { type: 'bearer' })
+      .send({ code: 'changed' })
+      .expect(400);
   });
 });

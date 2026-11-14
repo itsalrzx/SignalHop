@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 export default function DashboardPage() {
   const { user } = useAuth();
   const links = useQuery({
-    queryKey: ['links', 1],
-    queryFn: () => api<LinkPage>('/links?page=1&limit=10'),
+    queryKey: ['links', 1, 'all', ''],
+    queryFn: () => api<LinkPage>('/links?page=1&limit=10&status=all&search='),
   });
   return (
     <>
