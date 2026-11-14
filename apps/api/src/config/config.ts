@@ -32,6 +32,7 @@ export function settings(env: NodeJS.ProcessEnv = process.env) {
     origin,
     publicBaseUrl: new URL(env.PUBLIC_BASE_URL || origin).origin,
     jwtSecret: secret('JWT_SECRET'),
+    fingerprintSecret: secret('FINGERPRINT_SECRET'),
     port,
     production: env.NODE_ENV === 'production',
     trustProxy: env.TRUST_PROXY === 'true',

@@ -12,6 +12,7 @@
   "scripts": {
     "dev:api": "npm run dev -w @signalhop/api",
     "dev:web": "npm run dev -w @signalhop/web",
+    "dev:worker": "npm run dev:worker -w @signalhop/api",
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces",
     "lint": "eslint apps tests scripts --max-warnings=0",

@@ -16,6 +16,9 @@ FROM runtime AS api
 USER node
 EXPOSE 4000
 CMD ["npm", "start", "-w", "@signalhop/api"]
+FROM runtime AS worker
+USER node
+CMD ["npm", "run", "start:worker", "-w", "@signalhop/api"]
 FROM runtime AS web
 USER node
 ENV NODE_ENV=production

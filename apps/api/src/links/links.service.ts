@@ -89,8 +89,17 @@ export class LinksService {
       .skip((query.page - 1) * query.limit)
       .take(query.limit)
       .getManyAndCount();
+    const counts: { link_id: string; clicks: number }[] = items.length
+      ? await this.repo.manager.query(
+          'SELECT link_id,COUNT(*)::int AS clicks FROM click_events WHERE link_id=ANY($1::uuid[]) GROUP BY link_id',
+          [items.map((link) => link.id)],
+        )
+      : [];
     return {
-      items: items.map((link) => this.serialize(link)),
+      items: items.map((link) => ({
+        ...this.serialize(link),
+        clicks: Number(counts.find((row) => row.link_id === link.id)?.clicks || 0),
+      })),
       total,
       page: query.page,
       limit: query.limit,

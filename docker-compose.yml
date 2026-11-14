@@ -72,6 +72,12 @@ services:
       timeout: 3s
       start_period: 10s
       retries: 20
+  worker:
+    build: { context: ., target: worker }
+    env_file: ${ENV_FILE:-.env}
+    environment: *app-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
   web:
     build: { context: ., target: web }
     environment:

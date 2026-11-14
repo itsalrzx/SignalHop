@@ -9,6 +9,7 @@ export type ShortLink = {
   createdAt: string;
   updatedAt: string;
   shortUrl: string;
+  clicks?: number;
 };
 export type LinkPage = { items: ShortLink[]; total: number; page: number; limit: number };
 type Session = { accessToken: string; user: User };
@@ -98,3 +99,21 @@ export async function signIn(email: string, password: string) {
   setSession(session);
   return session;
 }
+
+export type AnalyticsReport = {
+  summary: { totalLinks: number; activeLinks: number; totalClicks: number; uniqueVisitors: number };
+  daily: { date: string; clicks: number }[];
+  topLinks: {
+    id: string;
+    title: string | null;
+    code: string;
+    destination: string;
+    clicks: number;
+  }[];
+  referrers: { name: string; value: number }[];
+  devices: { name: string; value: number }[];
+  browsers: { name: string; value: number }[];
+  generatedAt: string;
+  timezone: string;
+  link?: ShortLink;
+};

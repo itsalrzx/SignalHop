@@ -1,5 +1,8 @@
 import { expect, test } from '@playwright/test';
-test('account, custom link, edit, filter, delete and logout journey', async ({ page, request }) => {
+test('account, custom link, analytics, edit, filter, delete and logout journey', async ({
+  page,
+  request,
+}) => {
   test.setTimeout(60000);
   const email = 'browser-' + Date.now() + '@example.com';
   await page.goto('/');
@@ -11,6 +14,7 @@ test('account, custom link, edit, filter, delete and logout journey', async ({ p
   await page.getByLabel('Password', { exact: true }).fill('Portfolio-secret-2026');
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Total links', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Create link', exact: true }).click();
   await page.getByLabel('Destination URL').fill('https://example.com/portfolio');
   await page.getByLabel('Title').fill('Portfolio');
@@ -21,7 +25,23 @@ test('account, custom link, edit, filter, delete and logout journey', async ({ p
   const redirected = await request.get(href!, { maxRedirects: 0 });
   expect(redirected.status()).toBe(302);
   expect(redirected.headers()['location']).toBe('https://example.com/portfolio');
+  await expect(
+    page.getByRole('group', { name: 'Total clicks', exact: true }).getByText('1', { exact: true }),
+  ).toBeVisible({ timeout: 10000 });
+  await page.getByRole('link', { name: 'Analytics', exact: true }).click();
+  await expect(page).toHaveURL('/analytics');
+  await expect(page.getByRole('heading', { name: 'Analytics.' })).toBeVisible();
+  await page.getByLabel('Analytics period').selectOption('30');
+  await expect(page.getByRole('group', { name: 'Total clicks', exact: true })).toContainText('1');
   await page.getByRole('link', { name: 'My links', exact: true }).click();
+  await expect(page).toHaveURL('/links');
+  await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Portfolio', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Portfolio.' })).toBeVisible();
+  await expect(
+    page.getByRole('group', { name: 'Total clicks', exact: true }).getByText('1', { exact: true }),
+  ).toBeVisible();
+  await page.getByRole('link', { name: 'Back to my links' }).click();
   await expect(page).toHaveURL('/links');
   await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Edit Portfolio', exact: true }).click();
@@ -37,13 +57,16 @@ test('account, custom link, edit, filter, delete and logout journey', async ({ p
   await page.getByRole('button', { name: 'Delete Portfolio', exact: true }).click();
   await page.getByRole('button', { name: 'Delete link', exact: true }).click();
   await expect(page.getByText('No links match your filters.')).toBeVisible();
+  await page.getByRole('link', { name: 'Overview', exact: true }).click();
+  await expect(page).toHaveURL('/dashboard');
   await page.reload();
-  await expect(page.getByRole('heading', { name: 'My links', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
   await page.getByRole('button', { name: 'Sign out', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
 });
 
 test('mobile navigation and keyboard dialog remain usable', async ({ page }) => {
+  test.setTimeout(60000);
   await page.setViewportSize({ width: 375, height: 900 });
   const email = 'mobile-' + Date.now() + '@example.com';
   await page.goto('/register');
@@ -52,6 +75,7 @@ test('mobile navigation and keyboard dialog remain usable', async ({ page }) => 
   await page.getByLabel('Password', { exact: true }).fill('Portfolio-secret-2026');
   await page.getByRole('button', { name: 'Create account', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Overview.' })).toBeVisible();
+  await expect(page.getByRole('group', { name: 'Total links', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );
@@ -60,6 +84,10 @@ test('mobile navigation and keyboard dialog remain usable', async ({ page }) => 
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page.getByRole('button', { name: 'Create link', exact: true })).toBeFocused();
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('link', { name: 'Analytics', exact: true }).click();
+  await expect(page).toHaveURL('/analytics');
+  await expect(page.getByRole('heading', { name: 'Analytics.' })).toBeVisible();
   await page.goto('/docs');
   await expect(page.getByRole('heading', { name: /SignalHop API/ })).toBeVisible();
 });

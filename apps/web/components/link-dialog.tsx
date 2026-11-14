@@ -23,6 +23,7 @@ export function LinkDialog({ link }: { link?: ShortLink }) {
       }),
     onSuccess: () => {
       void client.invalidateQueries({ queryKey: ['links'] });
+      void client.invalidateQueries({ queryKey: ['analytics'] });
       setOpen(false);
     },
   });

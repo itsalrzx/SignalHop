@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import {
   ArrowUpRight,
+  BarChart3,
   BookOpen,
   LayoutDashboard,
   Link2,
@@ -37,6 +38,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const nav = [
     { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
     { href: '/links', label: 'My links', icon: Link2 },
+    { href: '/analytics', label: 'Analytics', icon: BarChart3 },
   ];
   return (
     <div>
@@ -71,7 +73,12 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               key={item.href}
               href={item.href}
               aria-current={pathname === item.href ? 'page' : undefined}
-              className={cn('nav-item', pathname === item.href && 'nav-active')}
+              className={cn(
+                'nav-item',
+                (pathname === item.href ||
+                  (item.href === '/links' && pathname.startsWith('/links/'))) &&
+                  'nav-active',
+              )}
             >
               <item.icon size={18} />
               {item.label}
@@ -108,7 +115,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <span className="text-xs text-[#8a958f]">
             Workspace <span className="mx-2 text-[#c4cbc6]">/</span>
             <span className="font-medium text-[#526359]">
-              {nav.find((n) => n.href === pathname)?.label || 'Overview'}
+              {nav.find((n) => n.href === pathname)?.label || 'Link detail'}
             </span>
           </span>
           <span className="flex items-center gap-2 rounded-full border border-[#e3e9e4] bg-white px-3 py-1.5 text-[11px] text-[#69796e]">

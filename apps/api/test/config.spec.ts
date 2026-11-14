@@ -4,6 +4,7 @@ const env = {
   REDIS_URL: 'redis://localhost:6379',
   APP_ORIGIN: 'http://localhost:3000',
   JWT_SECRET: 'a'.repeat(32),
+  FINGERPRINT_SECRET: 'b'.repeat(32),
 };
 describe('configuration', () => {
   it('rejects missing database configuration', () =>
@@ -21,6 +22,8 @@ describe('configuration', () => {
   it('rejects missing or short JWT secrets', () => {
     expect(() => settings({ ...env, JWT_SECRET: '' })).toThrow('JWT_SECRET');
     expect(() => settings({ ...env, JWT_SECRET: 'short' })).toThrow('32 characters');
+    expect(() => settings({ ...env, FINGERPRINT_SECRET: '' })).toThrow('FINGERPRINT_SECRET');
+    expect(() => settings({ ...env, FINGERPRINT_SECRET: 'short' })).toThrow('32 characters');
   });
   it('rejects production HTTP origins', () =>
     expect(() => settings({ ...env, NODE_ENV: 'production' })).toThrow('HTTPS'));

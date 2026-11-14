@@ -1,18 +1,48 @@
 import request from 'supertest';
+import { Worker } from 'bullmq';
+import { randomUUID } from 'node:crypto';
 import type { INestApplication } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { ClickCapture } from '../src/analytics/click-capture.service';
+import { CLICKS_QUEUE, ClickPayload, redisConnection } from '../src/analytics/queue';
+import { processClick } from '../src/analytics/process-click';
 import { RedisService } from '../src/common/redis.service';
 import { LinksService } from '../src/links/links.service';
 import { RedirectsService } from '../src/redirects/redirects.service';
 import { RateLimiter } from '../src/common/rate-limit';
 import { createApp } from '../src/bootstrap';
-describe('SignalHop Phase 3 with real PostgreSQL and Redis', () => {
+describe('SignalHop Phase 4 with real PostgreSQL and Redis', () => {
   let app: INestApplication;
   let tokenA: string;
   let tokenB: string;
   let cookie: string;
   let linkId: string;
   let code: string;
+  let worker: Worker<ClickPayload>;
+  let failNext = false;
+  const startWorker = () => {
+    const instance = new Worker<ClickPayload>(
+      CLICKS_QUEUE,
+      (job) => {
+        if (failNext) {
+          failNext = false;
+          throw new Error('Injected transient worker failure');
+        }
+        return processClick(app.get(DataSource), job.data);
+      },
+      { connection: redisConnection(true), concurrency: 2 },
+    );
+    instance.on('error', (error) => console.error('Test worker error:', error.name));
+    return instance;
+  };
+  const waitUntil = async (check: () => Promise<boolean>) => {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      if (await check()) return;
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+    throw new Error('Background processing did not complete in time');
+  };
   const email = 'api-' + Date.now() + '@example.com';
   const password = 'Portfolio-secret-2026';
   const browser = (req: request.Test) =>
@@ -21,6 +51,8 @@ describe('SignalHop Phase 3 with real PostgreSQL and Redis', () => {
     app = await createApp();
     await app.get(DataSource).runMigrations();
     await app.get(RedisService).client.flushdb();
+    worker = startWorker();
+    await worker.waitUntilReady();
     await request(app.getHttpServer())
       .post('/api/v1/auth/register')
       .send({ name: 'Alex', email, password })
@@ -43,6 +75,7 @@ describe('SignalHop Phase 3 with real PostgreSQL and Redis', () => {
     ).body.accessToken;
   });
   afterAll(async () => {
+    if (worker) await worker.close();
     if (app) await app.close();
   });
   it('checks actual dependency health and request ids', async () => {
@@ -365,5 +398,121 @@ describe('SignalHop Phase 3 with real PostgreSQL and Redis', () => {
       }
     }
     expect(statuses).toContain(429);
+  });
+  it('tracks actual redirects, deduplicates event IDs and reports period uniques', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/api/v1/links')
+      .auth(tokenA, { type: 'bearer' })
+      .send({ destination: 'https://example.com/analytics', title: 'Analytics check' })
+      .expect(201);
+    const id = created.body.id;
+    await request(app.getHttpServer())
+      .get('/r/' + created.body.code)
+      .set(
+        'User-Agent',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36',
+      )
+      .set('Referer', 'https://news.ycombinator.com/news?private=query')
+      .expect(302);
+    const db = app.get(DataSource);
+    await waitUntil(
+      async () =>
+        Number(
+          (await db.query('SELECT COUNT(*) FROM click_events WHERE link_id=$1', [id]))[0].count,
+        ) === 1,
+    );
+    const capture = jest.spyOn(app.get(ClickCapture), 'capture');
+    await request(app.getHttpServer())
+      .head('/r/' + created.body.code)
+      .expect(302);
+    expect(capture).not.toHaveBeenCalled();
+    capture.mockRestore();
+    const queue = app.get(ClickCapture).queue;
+    const yesterday = new Date(Date.now() - 86400000).toISOString();
+    const event: ClickPayload = {
+      id: randomUUID(),
+      linkId: id,
+      occurredAt: yesterday,
+      visitorHash: 'a'.repeat(64),
+      referrer: 'Direct / unknown',
+      userAgent: '',
+    };
+    await expect(processClick(db, { ...event, id: 'not-a-uuid' })).rejects.toThrow(
+      'Invalid click event',
+    );
+    const a = await queue.add('click', event, { jobId: randomUUID() });
+    const b = await queue.add('click', event, { jobId: randomUUID() });
+    await waitUntil(
+      async () => (await a.getState()) === 'completed' && (await b.getState()) === 'completed',
+    );
+    expect(
+      Number(
+        (await db.query('SELECT COUNT(*) FROM click_events WHERE id=$1', [event.id]))[0].count,
+      ),
+    ).toBe(1);
+    await processClick(db, { ...event, id: randomUUID(), occurredAt: new Date().toISOString() });
+    await processClick(db, {
+      ...event,
+      id: randomUUID(),
+      occurredAt: new Date(Date.now() - 100 * 86400000).toISOString(),
+    });
+    const report = await request(app.getHttpServer())
+      .get('/api/v1/links/' + id + '/analytics?days=7')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(report.body.summary.totalClicks).toBe(3);
+    expect(report.body.summary.uniqueVisitors).toBe(2);
+    expect(report.body.daily).toHaveLength(7);
+    expect(
+      report.body.daily.reduce((sum: number, row: { clicks: number }) => sum + row.clicks, 0),
+    ).toBe(3);
+    expect(report.body.referrers).toContainEqual({ name: 'news.ycombinator.com', value: 1 });
+    expect(report.body.browsers).toContainEqual({ name: 'Chrome', value: 1 });
+    const listing = await request(app.getHttpServer())
+      .get('/api/v1/links?search=Analytics check')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(200);
+    expect(listing.body.items[0].clicks).toBe(4);
+    await request(app.getHttpServer())
+      .get('/api/v1/links/' + id + '/analytics')
+      .auth(tokenB, { type: 'bearer' })
+      .expect(404);
+    await request(app.getHttpServer())
+      .get('/api/v1/analytics/overview?days=999')
+      .auth(tokenA, { type: 'bearer' })
+      .expect(400);
+  });
+  it('retries transient jobs and drains jobs after worker restart', async () => {
+    const queue = app.get(ClickCapture).queue;
+    const event: ClickPayload = {
+      id: randomUUID(),
+      linkId,
+      occurredAt: new Date().toISOString(),
+      visitorHash: 'b'.repeat(64),
+      referrer: 'Direct / unknown',
+      userAgent: '',
+    };
+    failNext = true;
+    const retry = await queue.add('click', event);
+    await waitUntil(async () => (await retry.getState()) === 'completed');
+    const saved = await queue.getJob(retry.id!);
+    expect(saved!.attemptsMade).toBeGreaterThanOrEqual(2);
+    await worker.close();
+    const delayed = await queue.add('click', { ...event, id: randomUUID() });
+    expect(await delayed.getState()).toBe('waiting');
+    worker = startWorker();
+    await worker.waitUntilReady();
+    await waitUntil(async () => (await delayed.getState()) === 'completed');
+  });
+  it('keeps redirects available when enqueue rejects', async () => {
+    const add = jest
+      .spyOn(app.get(ClickCapture).queue, 'add')
+      .mockRejectedValueOnce(new Error('Injected queue failure'));
+    const result = await request(app.getHttpServer())
+      .get('/r/' + code)
+      .expect(302);
+    expect(result.headers.location).toBe('https://example.com/final');
+    expect(add).toHaveBeenCalled();
+    add.mockRestore();
   });
 });

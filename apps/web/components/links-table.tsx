@@ -1,4 +1,5 @@
 'use client';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import {
   ArrowUpRight,
@@ -34,12 +35,14 @@ export function LinksTable({ compact = false }: { compact?: boolean }) {
     queryKey: ['links', page, status, search],
     queryFn: () => api<LinkPage>('/links?' + params),
     placeholderData: keepPreviousData,
+    refetchInterval: 10000,
   });
   const remove = useMutation({
     mutationFn: (id: string) => api('/links/' + id, { method: 'DELETE' }),
     onSuccess: () => {
       setDeleting(null);
       void client.invalidateQueries({ queryKey: ['links'] });
+      void client.invalidateQueries({ queryKey: ['analytics'] });
       if (query.data?.items.length === 1 && page > 1) setPage(page - 1);
     },
   });
@@ -124,6 +127,7 @@ export function LinksTable({ compact = false }: { compact?: boolean }) {
                   <tr>
                     <th>Link</th>
                     <th>Destination</th>
+                    <th>Clicks</th>
                     <th>Status</th>
                     <th>
                       <span className="sr-only">Actions</span>
@@ -143,9 +147,12 @@ export function LinksTable({ compact = false }: { compact?: boolean }) {
                               <Link2 size={19} />
                             </span>
                             <div>
-                              <span className="block max-w-[220px] truncate font-medium text-[#37483d]">
+                              <Link
+                                href={'/links/' + link.id}
+                                className="block max-w-[220px] truncate font-medium text-[#37483d] hover:text-[#13795b]"
+                              >
                                 {link.title || new URL(link.destination).hostname}
-                              </span>
+                              </Link>
                               <a
                                 className="mt-1 inline-flex items-center gap-1 whitespace-nowrap text-xs text-[#27815f] hover:underline"
                                 href={'/r/' + link.code}
@@ -160,11 +167,14 @@ export function LinksTable({ compact = false }: { compact?: boolean }) {
                         </td>
                         <td>
                           <span
-                            className="block max-w-[220px] truncate text-xs text-[#718075]"
+                            className="block max-w-[180px] truncate text-xs text-[#718075]"
                             title={link.destination}
                           >
                             {link.destination}
                           </span>
+                        </td>
+                        <td className="tabular-nums text-[#718575]">
+                          {new Intl.NumberFormat().format(link.clicks || 0)}
                         </td>
                         <td>
                           <span
