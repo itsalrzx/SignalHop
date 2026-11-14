@@ -2,9 +2,20 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { dataSource } from './database/data-source';
 import { PlatformModule } from './common/platform.module';
+import { AuthModule } from './auth/auth.module';
+import { UsersModule } from './users/users.module';
+import { LinksModule } from './links/links.module';
+import { RedirectsModule } from './redirects/redirects.module';
 import { HealthController } from './health.controller';
 @Module({
-  imports: [TypeOrmModule.forRoot(dataSource.options), PlatformModule],
+  imports: [
+    TypeOrmModule.forRoot(dataSource.options),
+    PlatformModule,
+    AuthModule,
+    UsersModule,
+    LinksModule,
+    RedirectsModule,
+  ],
   controllers: [HealthController],
 })
 export class AppModule {}

@@ -22,6 +22,8 @@ jobs:
       DATABASE_URL: postgresql://signalhop:signalhop_dev@localhost:55432/signalhop_phase0_test
       REDIS_URL: redis://localhost:56379
       APP_ORIGIN: http://localhost:3100
+      PUBLIC_BASE_URL: http://localhost:3100
+      JWT_SECRET: ci-only-not-a-production-secret-123456789
       NEXT_TELEMETRY_DISABLED: '1'
       TEST_DATABASE_URL: postgresql://signalhop:signalhop_dev@localhost:55432/signalhop_phase0_test
     steps:

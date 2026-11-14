@@ -1,6 +1,7 @@
 import { ConsoleLogger, Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
+import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { randomUUID } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
@@ -16,6 +17,7 @@ export async function createApp() {
   app.enableShutdownHooks();
   if (settings().trustProxy) app.getHttpAdapter().getInstance().set('trust proxy', 1);
   app.use(helmet());
+  app.use(cookieParser());
   const logger = new Logger('Request');
   app.use((req: Request, res: Response, next: NextFunction) => {
     const started = performance.now();
@@ -39,8 +41,9 @@ export async function createApp() {
     app,
     new DocumentBuilder()
       .setTitle('SignalHop API')
-      .setDescription('Phase 0 infrastructure: application liveness and dependency readiness.')
+      .setDescription('Personal link management. Ownership enforced on every private resource.')
       .setVersion('1.0')
+      .addBearerAuth()
       .build(),
   );
   SwaggerModule.setup('docs', app, document, {

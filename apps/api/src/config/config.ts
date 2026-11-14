@@ -7,6 +7,12 @@ export function settings(env: NodeJS.ProcessEnv = process.env) {
     if (!value) throw new Error(key + ' is required');
     return value;
   };
+  const secret = (key: string) => {
+    const value = required(key);
+    if (value.length < 32 || (env.NODE_ENV === 'production' && value.startsWith('replace-')))
+      throw new Error(key + ' must be a random secret of at least 32 characters');
+    return value;
+  };
   const databaseUrl = new URL(required('DATABASE_URL'));
   if (!['postgres:', 'postgresql:'].includes(databaseUrl.protocol))
     throw new Error('DATABASE_URL must be PostgreSQL');
@@ -24,6 +30,8 @@ export function settings(env: NodeJS.ProcessEnv = process.env) {
     databaseUrl: databaseUrl.toString(),
     redisUrl: redisUrl.toString(),
     origin,
+    publicBaseUrl: new URL(env.PUBLIC_BASE_URL || origin).origin,
+    jwtSecret: secret('JWT_SECRET'),
     port,
     production: env.NODE_ENV === 'production',
     trustProxy: env.TRUST_PROXY === 'true',
